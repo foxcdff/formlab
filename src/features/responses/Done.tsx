@@ -1,0 +1,2 @@
+import { Link } from 'react-router-dom'
+export default function Done() { return <div className="public-page"><div className="public-brand"><span className="brand-icon">F</span> FormLab</div><div className="public-card done-card"><div className="modal-success">✓</div><h1>Спасибо за ваш ответ!</h1><p>Ваши ответы успешно записаны. Вы помогаете нам становиться лучше.</p><Link className="btn primary" to="/surveys">Готово</Link></div></div> }

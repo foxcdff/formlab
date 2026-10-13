@@ -1,0 +1,39 @@
+import { useState } from 'react'
+import { Link, useParams } from 'react-router-dom'
+import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import { useGetResponsesQuery, useGetSurveyQuery } from '../surveys/surveysApi'
+import type { AnswerValue, Question } from '../surveys/types'
+
+const chartColors = ['#7765e8', '#a49af4', '#43b99b', '#f1ad5d', '#ee8295', '#65a9e8']
+function countAnswers(question: Question, responses: { answers: Record<string, AnswerValue> }[]) {
+  const labels = question.options?.map((o) => o.label) || (question.type === 'rating' ? ['1', '2', '3', '4', '5'] : question.type === 'scale' ? Array.from({ length: Math.max(0, Math.min(20, (question.scale?.max ?? 10) - (question.scale?.min ?? 1) + 1)) }, (_, i) => String((question.scale?.min ?? 1) + i)) : [])
+  return labels.map((label) => ({ name: label, count: responses.reduce((sum, response) => { const value = response.answers[question.id]; return sum + (Array.isArray(value) ? Number(value.includes(label)) : String(value ?? '') === label ? 1 : 0) }, 0) }))
+}
+export default function Results() {
+  const { id } = useParams()
+  const surveyId = Number(id)
+  const { data: survey, isLoading } = useGetSurveyQuery(surveyId)
+  const { data: responses = [] } = useGetResponsesQuery(surveyId)
+  const [tab, setTab] = useState<'summary' | 'individual'>('summary')
+  const [page, setPage] = useState(0)
+  if (isLoading || !survey) return <div className="page-wrap"><div className="loading-text">Загрузка результатов…</div></div>
+  const exportCsv = () => {
+    const rows = [['Дата ответа', ...survey.questions.map((q) => q.title)], ...responses.map((response) => [new Date(response.submittedAt).toLocaleString('ru-RU'), ...survey.questions.map((q) => { const answer = response.answers[q.id]; return Array.isArray(answer) ? answer.join(', ') : String(answer ?? '') })])]
+    const csv = '\uFEFF' + rows.map((row) => row.map((value) => `"${value.replace(/"/g, '""')}"`).join(';')).join('\r\n')
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }))
+    const a = document.createElement('a'); a.href = url; a.download = `${survey.title || 'answers'}.csv`; a.click(); URL.revokeObjectURL(url)
+  }
+  const visible = responses.slice(page * 5, page * 5 + 5)
+  return <div className="page-wrap results-page"><header className="topbar"><div><div className="breadcrumb"><Link to="/surveys">Мои опросы</Link> <span>/</span> Результаты</div><h1>{survey.title}</h1><p className="muted">Сводка ответов и результаты опроса</p></div><div className="header-actions"><Link className="btn outline" to={`/surveys/${surveyId}/edit`}>← Редактор</Link><button className="btn primary" onClick={exportCsv}>↓ Экспорт CSV</button></div></header>
+    <div className="result-stats"><div className="stat-card"><div><small>Всего ответов</small><strong>{responses.length}</strong><span className="stat-foot">За всё время</span></div></div><div className="stat-card"><div><small>Последний ответ</small><strong className="date-stat">{responses.length ? new Date(responses[responses.length - 1].submittedAt).toLocaleDateString('ru-RU') : '—'}</strong><span className="stat-foot">Дата отправки</span></div></div><div className="stat-card"><div><small>Вопросов</small><strong>{survey.questions.length}</strong><span className="stat-foot">В этой форме</span></div></div></div>
+    <div className="tabs"><button className={tab === 'summary' ? 'selected' : ''} onClick={() => setTab('summary')}>▥ Сводка</button><button className={tab === 'individual' ? 'selected' : ''} onClick={() => setTab('individual')}>☷ Отдельные ответы <span>{responses.length}</span></button></div>
+    {tab === 'summary' ? <div className="results-questions">{survey.questions.map((question, index) => {
+      const textQuestion = ['short_text', 'long_text', 'date'].includes(question.type)
+      const data = countAnswers(question, responses)
+      const average = responses.map((r) => r.answers[question.id]).filter((v): v is number => typeof v === 'number')
+      return <section className="panel result-question" key={question.id}><div className="result-question-head"><div className="result-index">{String(index + 1).padStart(2, '0')}</div><div><h2>{question.title || 'Без названия'}</h2><p>{responses.length} ответов · {question.required ? 'Обязательный' : 'Необязательный'}</p></div></div>
+        {textQuestion ? <div className="text-answers">{responses.length ? responses.map((response) => <div className="text-answer" key={response.submittedAt}>{String(response.answers[question.id] ?? '—')}<small>{new Date(response.submittedAt).toLocaleDateString('ru-RU')}</small></div>) : <div className="empty-chart">Ответов пока нет</div>}</div> : question.type === 'single_choice' || question.type === 'dropdown' ? <div className="chart-row"><div className="chart-box"><ResponsiveContainer width="100%" height={230}><PieChart><Pie data={data} dataKey="count" nameKey="name" outerRadius={88} innerRadius={50} paddingAngle={2}>{data.map((entry, i) => <Cell key={entry.name} fill={chartColors[i % chartColors.length]} />)}</Pie><Tooltip /></PieChart></ResponsiveContainer></div><div className="chart-legend">{data.map((entry, i) => <div key={entry.name}><span style={{ background: chartColors[i % chartColors.length] }}></span><label>{entry.name}</label><b>{entry.count}</b><small>{responses.length ? Math.round(entry.count / responses.length * 100) : 0}%</small></div>)}</div></div> : question.type === 'multiple_choice' ? <><div className="chart-box bar-chart"><ResponsiveContainer width="100%" height={Math.max(180, data.length * 45)}><BarChart data={data} layout="vertical" margin={{ left: 10, right: 25 }}><CartesianGrid strokeDasharray="3 3" horizontal={false} /><XAxis type="number" allowDecimals={false} /><YAxis type="category" dataKey="name" width={100} /><Tooltip /><Bar dataKey="count" fill="#7765e8" radius={[0, 5, 5, 0]} /></BarChart></ResponsiveContainer></div><p className="muted small-note">Можно выбрать несколько вариантов, поэтому сумма процентов может быть больше 100%.</p></> : <><div className="chart-box bar-chart"><ResponsiveContainer width="100%" height={220}><BarChart data={data}><CartesianGrid strokeDasharray="3 3" vertical={false} /><XAxis dataKey="name" /><YAxis allowDecimals={false} /><Tooltip /><Bar dataKey="count" fill="#7765e8" radius={[5, 5, 0, 0]} /></BarChart></ResponsiveContainer></div>{average.length > 0 && <div className="average-pill">Среднее значение: <b>{(average.reduce((a, b) => a + b, 0) / average.length).toFixed(1)}</b></div>}</>}
+      </section>
+    })}{survey.questions.length === 0 && <div className="empty-state">В этом опросе пока нет вопросов.</div>}</div> : <div className="panel individual-panel"><div className="panel-heading"><div><h2>Ответы участников</h2><p className="muted">По 5 ответов на странице</p></div><span className="count-pill">{responses.length} всего</span></div>{visible.length ? visible.map((response, i) => <div className="individual-response" key={response.id}><div className="individual-response-top"><b>Ответ #{page * 5 + i + 1}</b><small>{new Date(response.submittedAt).toLocaleString('ru-RU')}</small></div>{survey.questions.map((q) => <div className="individual-answer" key={q.id}><span>{q.title || 'Без названия'}</span><b>{Array.isArray(response.answers[q.id]) ? (response.answers[q.id] as string[]).join(', ') : String(response.answers[q.id] ?? '—')}</b></div>)}</div>) : <div className="empty-state"><h3>Ответов пока нет</h3><p>Опубликуйте опрос и поделитесь ссылкой.</p></div>}<div className="pagination"><button className="btn outline" disabled={page === 0} onClick={() => setPage(page - 1)}>← Назад</button><span>Страница {page + 1} из {Math.max(1, Math.ceil(responses.length / 5))}</span><button className="btn outline" disabled={(page + 1) * 5 >= responses.length} onClick={() => setPage(page + 1)}>Далее →</button></div></div>}
+  </div>
+}
